@@ -98,7 +98,9 @@ template.
 ## Examples
 
 ```bash
-python examples/quickstart.py       # synthetic shift, CPU, under a minute
+python examples/quickstart.py       # synthetic shifts (harmful fires, confident
+                                    # shift stays quiet); seconds on GPU,
+                                    # a few minutes on CPU
 python examples/real_datasets.py    # covertype / adult income / folktables
 ```
 
