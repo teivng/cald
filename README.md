@@ -92,8 +92,13 @@ Adapters live in `cald.adapters`; the attachment contract is
 | `tabicl` | 🚧 placeholder | The paper's TabICL v1.1 integration (tabicl 0.1.x, private forward). |
 
 To attach CALD to your own in-context model, implement `CALDBackbone` — the
-nano adapter (`cald/adapters/nanotabiclv2/adapter.py`, ~70 lines) is the
-template.
+nano adapter (`cald/adapters/nanotabiclv2/adapter.py`, ~90 lines) is the
+template — and optionally expose it by name:
+
+```python
+from cald.adapters import register_adapter
+register_adapter("mymodel", MyModelAdapter)
+```
 
 ## Examples
 

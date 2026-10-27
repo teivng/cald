@@ -54,13 +54,21 @@ class CALD:
         eval_size: rows per calibration eval batch; detection batches of a
             different size are allowed but calibrate/detect sizes should match
             for the FPR guarantee to be meaningful.
-        seed: RNG seed for the splits, the calibration bootstraps and torch.
+        seed: RNG seed for the splits and the calibration bootstraps (local
+            generators only; the detector never touches global RNG state).
+        deterministic: opt-in call to ``cald.seeding.seed_everything(seed)``
+            at the start of ``fit``. This mutates GLOBAL state (python/numpy/
+            torch seeds, cuDNN determinism), which is why it is off by default;
+            CALD itself is deterministic without it for deterministic backbones.
+
+    The backbone instance is owned by this detector while it is in use — do
+    not share one adapter between two live detectors (see CALDBackbone).
     """
 
     def __init__(self, backbone: CALDBackbone, lr: float = 1e-3, n_steps: int = 50,
                  fpr: float = 0.05, n_calibration: int = 50,
                  support_size: int = 2000, anchor_size: int = 128,
-                 eval_size: int = 128, seed: int = 42):
+                 eval_size: int = 128, seed: int = 42, deterministic: bool = False):
         self.backbone = backbone
         self.lr = lr
         self.n_steps = n_steps
@@ -70,22 +78,25 @@ class CALD:
         self.anchor_size = anchor_size
         self.eval_size = eval_size
         self.seed = seed
+        self.deterministic = deterministic
 
         self.threshold_: float | None = None
         self.id_scores_: list[float] | None = None
         self._X_anchor: np.ndarray | None = None
         self._y_anchor_enc: torch.Tensor | None = None
-        self._rng_eval = None
 
     # ------------------------------------------------------------------ fit
     def fit(self, X_id: np.ndarray, y_id: np.ndarray) -> "CALD":
         """Split ID data into support / anchor / calibration pool, condition
         the backbone, and calibrate the fire-low threshold."""
         X_id, y_id = np.asarray(X_id), np.asarray(y_id)
-        seed_everything(self.seed)
+        if self.deterministic:
+            seed_everything(self.seed)
+        # fixed offsets keep the three sampling streams independent (and match
+        # the paper's experiment harness)
         rng_sup = np.random.default_rng(self.seed + 1000)
         rng_anc = np.random.default_rng(self.seed + 2000)
-        self._rng_eval = np.random.default_rng(self.seed)
+        rng_eval = np.random.default_rng(self.seed)
 
         n_sup = self.support_size
         if n_sup == -1:
@@ -120,11 +131,11 @@ class CALD:
         self.backbone.fit(X_sup, y_sup)
         self._X_anchor = X_anc
         self._y_anchor_enc = torch.tensor(
-            np.searchsorted(self.backbone.classes_, y_anc), dtype=torch.long)
+            self.backbone.encode_labels(y_anc), dtype=torch.long)
 
         self.id_scores_ = []
         for _ in range(self.n_calibration):
-            X_ev, _, _ = stratified_bootstrap(X_cal, y_cal, self.eval_size, self._rng_eval)
+            X_ev, _, _ = stratified_bootstrap(X_cal, y_cal, self.eval_size, rng_eval)
             self.id_scores_.append(self.score(X_ev)[0])
         self.threshold_ = float(np.percentile(self.id_scores_, self.fpr * 100))
         return self

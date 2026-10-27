@@ -18,12 +18,15 @@
    override on ``TableAttnBase``, which every attention block inherits.
 """
 
+import os
+
 import torch
 
 from .upstream import load_upstream
 
-# ~2 GB fp32 attention-matrix budget per row_attn chunk
-CHUNK_ELEMS = 2 ** 29
+# fp32 attention-matrix element budget per row_attn chunk (~2 GB by default);
+# override with the CALD_CHUNK_ELEMS environment variable on tight GPUs
+CHUNK_ELEMS = int(os.environ.get("CALD_CHUNK_ELEMS", 2 ** 29))
 
 _cache: dict = {}
 

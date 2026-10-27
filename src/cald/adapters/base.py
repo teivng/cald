@@ -21,16 +21,38 @@ class CALDBackbone(ABC):
     """Contract between a tabular in-context backbone and the CALD detector.
 
     After ``fit``, the adapter must expose ``classes_`` (sorted unique original
-    labels, as produced by ``np.unique``); the detector encodes labels with
-    ``np.searchsorted(classes_, y)`` and all logits/probabilities are in this
-    encoded class order.
+    labels, as produced by ``np.unique``). ``encode_labels`` is the single
+    source of truth for the label encoding; all logits/probabilities are in
+    that encoded class order.
+
+    A backbone instance belongs to one detector at a time: ``fit`` repoints
+    the in-context support that every later call uses, so sharing one adapter
+    between two live ``CALD`` detectors silently corrupts both. Reuse an
+    adapter only sequentially (fit -> detect..., then fit again).
     """
 
     classes_: np.ndarray
 
+    def _check_fitted(self) -> None:
+        if getattr(self, "classes_", None) is None:
+            raise RuntimeError(
+                f"{type(self).__name__} is not fitted — call "
+                "fit(X_support, y_support) first")
+
     @property
     def n_classes(self) -> int:
+        self._check_fitted()
         return len(self.classes_)
+
+    def encode_labels(self, y: np.ndarray) -> np.ndarray:
+        """Map original labels to the 0..C-1 encoding used by the logits.
+
+        The default is positional lookup in the sorted ``classes_`` (the same
+        scheme as scikit-learn's LabelEncoder). Adapters that encode labels
+        differently must override this so the detector stays consistent.
+        """
+        self._check_fitted()
+        return np.searchsorted(self.classes_, np.asarray(y))
 
     @abstractmethod
     def fit(self, X_support: np.ndarray, y_support: np.ndarray) -> "CALDBackbone":
