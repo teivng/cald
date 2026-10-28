@@ -7,39 +7,110 @@ that exposes a differentiable forward pass and a decoder head.
 From **"When to Trust a PFN: Detecting Harmful Shift in Tabular Foundation
 Models"** (NeurIPS 2026).
 
-CALD partitions the queries into two roles beside the in-context **support**
-set: a held-out *labelled* ID **anchor** batch, and an *unlabelled* **eval**
-batch whose distributional origin is unknown. The decoder is briefly finetuned
-under a joint objective — a cross-entropy agreement term on the anchor against
-its true labels, plus a disagreement cross-entropy (DCE) term on the eval
-batch rewarding low probability on the model's own frozen pseudolabels. The
-post-finetune anchor loss **λ := L_anc(θ_T)** is systematically *lower* when
-the eval batch is OOD than when it is ID, and CALD turns this signal into a
-calibrated one-sided test.
+## What it does, intuitively
 
-![CALD in three steps: setup (anchor inside the ID manifold, eval batch of unknown origin), mechanism (joint agree/disagree finetuning; the anchor-loss trajectory separates ID from OOD), decision (one-sided test of the deployment statistic against the ID calibration record)](docs/figure1.png)
+Tabular foundation models (TabPFN, TabICL, …) make predictions by
+*conditioning* on a labelled table of examples — no training step, just a
+forward pass. That makes them easy to deploy, and easy to deploy on data they
+silently handle badly: when the world drifts away from the data they were
+conditioned on, their predictions degrade and nothing warns you.
+
+CALD is that warning. The trick: ask the model to **argue against itself**.
+Keep a small stash of labelled examples you trust (the *anchor*), take the new
+unlabelled batch you're suspicious of (the *eval* batch), and briefly nudge the
+model's last layers toward two goals at once — *keep getting the anchor right*
+while *disagreeing with your own predictions on the new batch*.
+
+- If the new batch looks like the training data, the model genuinely believes
+  its predictions there. Forcing it to disagree is a real fight, the fight
+  spills over, and its anchor accuracy visibly suffers.
+- If the new batch is shifted, the model was never confident there to begin
+  with. Disagreeing is cheap, nothing spills over, and the anchor stays
+  intact.
+
+So after a few finetuning steps, one number — the anchor loss — tells you
+which world you're in: it stays **high** on familiar data and ends up **low**
+on shifted data. CALD repeats this probe on data known to be in-distribution
+to learn what "normal" looks like, then flags any deployment batch whose
+anchor loss lands below that normal range.
 
 ## Method
 
-Given hyperparameters T (finetune steps), K (calibration rounds), η (learning
-rate) and α (test level), CALD proceeds in two phases:
+This section follows Section 2 of the paper.
 
-1. **Calibration phase.** For each round k = 1…K, draw an ID eval batch,
-   freeze its pseudolabels assigned by the pretrained model, reset θ ← θ₀, and
-   run T gradient steps on the joint loss, forward-passing the sequence
-   (support, anchor, eval) at each step. Record the post-finetune anchor loss
-   λ⁽ᵏ⁾ := L_anc(θ_T). The K values form an empirical null record under
+![Figure 1 from the paper. CALD in three steps: setup (a labelled anchor inside the ID manifold, an eval batch of unknown origin), mechanism (joint agree/disagree finetuning; the anchor-loss trajectory separates ID from OOD), decision (a one-sided test of the deployment statistic against the ID calibration record).](docs/figure1.png)
+
+Denote the ID distribution $p_0$ and let
+$\mathcal{D}^{\mathrm{sup}} = (X_{\mathrm{sup}}, y_{\mathrm{sup}}) \sim p_0^n$
+be a size-$n$ ID support set. The queries are partitioned into two disjoint
+roles:
+
+- **Anchor** $(X_{\mathrm{anc}}, y_{\mathrm{anc}}) \sim p_0$ with
+  $X_{\mathrm{anc}} \cap X_{\mathrm{sup}} = \emptyset$: a held-out set of
+  *labelled* ID samples, serving as a reference ID signal.
+- **Eval** $X_{\mathrm{eval}} \sim p_1 \overset{?}{=} p_0$: a batch of
+  *unlabelled* query points whose distributional origin is unknown.
+
+Let $q_\theta$ denote the PFN conditioned on $\mathcal{D}^{\mathrm{sup}}$, and
+write $\hat{y}_{\mathrm{eval}}$ for the pseudolabels
+$\hat{y} = \arg\max_y q_{\theta}(y \mid x, \mathcal{D}^{\mathrm{sup}})$ it
+assigns to $X_{\mathrm{eval}}$. CALD computes the cross-entropy loss rewarding
+correct predictions on the anchor,
+
+$$
+\mathcal{L}_{\mathrm{anc}}(\theta) = \frac{1}{|X_{\mathrm{anc}}|}
+\sum_{(x,y)} -\log q_\theta(y \mid x, \mathcal{D}^{\mathrm{sup}}),
+$$
+
+and the Disagreement Cross-Entropy (DCE) loss on the eval set, rewarding the
+model for placing low probability on its own initial pseudolabels,
+
+$$
+\mathcal{L}_{\mathrm{eval}}(\theta) = \frac{1}{|X_{\mathrm{eval}}|}
+\sum_{(x,\hat{y})} \left[ \frac{1}{C-1} \sum_{c \neq \hat{y}}
+-\log q_\theta(c \mid x) \right].
+$$
+
+Gradient descent on the joint objective
+$\mathcal{L}(\theta) = \mathcal{L}_{\mathrm{anc}}(\theta) + \mathcal{L}_{\mathrm{eval}}(\theta)$
+forces $q_\theta$ to disagree on the eval set while remaining performant on ID
+samples. The *post-finetune anchor loss*
+$\lambda := \mathcal{L}_{\mathrm{anc}}(\theta_T)$ is systematically **lower**
+when $X_{\mathrm{eval}}$ is OOD than when it is ID; CALD turns this
+one-dimensional signal into a calibrated one-sided test.
+
+Given hyperparameters $T$ (finetune steps), $K$ (calibration rounds), $\eta$
+(learning rate), and $\alpha$ (test level), CALD proceeds in two phases:
+
+1. **Calibration phase.** For each round $k = 1, \ldots, K$, draw an ID eval
+   batch $X_{\mathrm{eval}}^{(k)} \sim p_0$, freeze its pseudolabels
+   $\hat{y}_{\mathrm{eval}}^{(k)}$ assigned by $q_{\theta_0}$, and reset
+   $\theta \leftarrow \theta_0$. At each of $T$ gradient steps, the PFN
+   forward-passes the joint sequence
+   $(X_{\mathrm{sup}}, y_{\mathrm{sup}}, X_{\mathrm{anc}}, X_{\mathrm{eval}}^{(k)})$:
+   the anchor logits supply $\mathcal{L}_{\mathrm{anc}}(\theta)$ against the
+   true labels, the eval logits supply $\mathcal{L}_{\mathrm{eval}}(\theta)$
+   against the frozen pseudolabels, and the joint loss is descended via
+   $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}(\theta)$ with
+   only the decoder trainable. Record
+   $\lambda^{(k)} := \mathcal{L}_{\mathrm{anc}}(\theta_T)$. After $K$ rounds,
+   the record $\{\lambda^{(k)}\}_{k=1}^{K}$ is an empirical null under
    known-ID conditions.
-2. **Deployment phase.** On a batch of unknown origin, freeze its
-   pseudolabels, reset θ ← θ₀, run the same T-step finetune, and record λ\*.
-   The verdict is a one-sided test against the calibration record:
+2. **Deployment phase.** On a deployment batch $X_{\mathrm{eval}}^{*}$ of
+   unknown origin, freeze its pseudolabels, reset $\theta \leftarrow \theta_0$,
+   and run the same $T$-step finetune, recording the deployment statistic
+   $\lambda^{*} := \mathcal{L}_{\mathrm{anc}}(\theta_T)$. The verdict is a
+   one-sided test against the calibration record:
 
-   λ\* < Quantile_α(λ⁽¹⁾, …, λ⁽ᴷ⁾)  ⟹  declare OOD.
+$$
+\lambda^{*} < \mathrm{Quantile}_\alpha\left(\lambda^{(1)}, \ldots, \lambda^{(K)}\right)
+\;\Longrightarrow\; \text{declare OOD}.
+$$
 
 The support set and anchor are held fixed across both phases; only the eval
-batch varies. Under the null (the deployment batch drawn from the same
-distribution as the calibration batches, hyperparameters fixed before
-deployment), the false-alarm rate is at most α + 1/(K+1).
+batch varies. Under the null (the deployment batch exchangeable with the
+calibration batches, hyperparameters fixed before deployment), the false-alarm
+rate is at most $\alpha + \frac{1}{K+1}$.
 
 ## Install
 
@@ -73,10 +144,10 @@ print(result.fired, result.statistic, result.threshold)
 
 `CALD.fit` splits the ID data into a support set (the backbone's in-context
 prompt), a disjoint anchor batch, and a calibration pool, then runs the
-calibration phase (`n_calibration` = K rounds, eval batches bootstrapped from
-the calibration pool) and sets the threshold at the empirical α-quantile of
-the λ record. `detect` runs the deployment phase on a fresh copy of the
-decoder (θ ← θ₀ each call).
+calibration phase (`n_calibration` $= K$ rounds, eval batches bootstrapped
+from the calibration pool) and sets the threshold at the empirical
+$\alpha$-quantile of the $\lambda$ record. `detect` runs the deployment phase
+on a fresh copy of the decoder ($\theta \leftarrow \theta_0$ each call).
 
 ## Backbones
 
@@ -118,15 +189,32 @@ pytest tests/            # detector semantics run without weights;
                          # (or set CALD_TEST_CKPT=/path/to/tabicl-classifier-v2-*.ckpt)
 ```
 
-## Paper settings
+## Hyperparameters
 
-The paper's certified deployment mode is η = `lr=1e-3` frozen before
-deployment, with `n_steps=50` (T), `n_calibration=50` (K), `alpha=0.05`,
-`anchor_size=128`, `eval_size=128` — these are the package defaults. Like the
-paper's experiments, the decoder finetuned is the backbone's full decoder MLP
-(last-layer-only finetuning appears in the paper only as an ablation). The
-full experimental harness (15 datasets, 16 baselines, harm labelling via a
-Hoeffding bound) lives in the paper's research repository.
+The paper's certified deployment mode, and this package's defaults:
+
+| Parameter | Paper symbol | Default |
+|---|---|---|
+| `lr` | $\eta$ | `1e-3` (frozen before deployment) |
+| `n_steps` | $T$ | 50 |
+| `n_calibration` | $K$ | 50 |
+| `alpha` | $\alpha$ | 0.05 |
+| `anchor_size` | — | 128 |
+| `eval_size` | — | 128 |
+
+Like the paper's experiments, the decoder finetuned is the backbone's full
+decoder MLP (last-layer-only finetuning appears in the paper only as an
+ablation). The full experimental harness (15 datasets, 16 baselines, harm
+labelling via a Hoeffding bound) lives in the paper's research repository.
+
+**Hardware.** CALD is light: only the decoder MLP trains (about 0.5M
+parameters for TabICLv2), so a detection call is $T$ forward/backward passes,
+not model training. The paper's experiments ran on a single NVIDIA A6000
+(48 GB), with peak GPU memory around 10 GB on the largest dataset; the
+TabICLv2/nanoTabICL experiments ran on a single RTX PRO 6000. On plain tabular
+data (tens of features, support of a few thousand rows) a detection call takes
+seconds on any modern GPU, and CPU-only works for small problems — the
+quickstart runs on a laptop.
 
 ## Citation
 
