@@ -7,32 +7,13 @@ that exposes a differentiable forward pass and a decoder head.
 From **"When to Trust a PFN: Detecting Harmful Shift in Tabular Foundation
 Models"** (NeurIPS 2026).
 
-## What it does, intuitively
-
-Tabular foundation models (TabPFN, TabICL, …) make predictions by
-*conditioning* on a labelled table of examples — no training step, just a
-forward pass. That makes them easy to deploy, and easy to deploy on data they
-silently handle badly: when the world drifts away from the data they were
-conditioned on, their predictions degrade and nothing warns you.
-
-CALD is that warning. The trick: ask the model to **argue against itself**.
-Keep a small stash of labelled examples you trust (the *anchor*), take the new
-unlabelled batch you're suspicious of (the *eval* batch), and briefly nudge the
-model's last layers toward two goals at once — *keep getting the anchor right*
-while *disagreeing with your own predictions on the new batch*.
-
-- If the new batch looks like the training data, the model genuinely believes
-  its predictions there. Forcing it to disagree is a real fight, the fight
-  spills over, and its anchor accuracy visibly suffers.
-- If the new batch is shifted, the model was never confident there to begin
-  with. Disagreeing is cheap, nothing spills over, and the anchor stays
-  intact.
-
-So after a few finetuning steps, one number — the anchor loss — tells you
-which world you're in: it stays **high** on familiar data and ends up **low**
-on shifted data. CALD repeats this probe on data known to be in-distribution
-to learn what "normal" looks like, then flags any deployment batch whose
-anchor loss lands below that normal range.
+CALD asks the model to argue against itself: briefly finetune its decoder to
+*disagree* with its own predictions on a new unlabelled batch while *staying
+right* on a small trusted set of labelled examples (the anchor). On familiar
+data the model defends its predictions and the fight drags the anchor loss up;
+on shifted data it was never confident to begin with, disagreement is cheap,
+and the anchor loss stays low — so a low post-finetune anchor loss, compared
+against its range on known in-distribution batches, is the alarm.
 
 ## Method
 
