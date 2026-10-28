@@ -17,22 +17,7 @@ post-finetune anchor loss **λ := L_anc(θ_T)** is systematically *lower* when
 the eval batch is OOD than when it is ID, and CALD turns this signal into a
 calibrated one-sided test.
 
-```
-              X_support (labelled, in-context)
-                       │
-                       ▼
-                ┌─────────────┐
-   X_anchor ───►│  frozen     │──► CE(·, y_anchor)        anchor loss
-   (labelled)   │  backbone   │
-                │  + decoder  │     finetune to minimize both
-                │  (trained)  │
-   X_eval ─────►│             │──► DCE(·, ŷ_eval)         disagreement loss
-   (unlabelled) └─────────────┘
-                       │
-                       ▼
-              anchor-loss trajectory
-              final value λ LOW  ⇔  eval is shifted
-```
+![CALD in three steps: setup (anchor inside the ID manifold, eval batch of unknown origin), mechanism (joint agree/disagree finetuning; the anchor-loss trajectory separates ID from OOD), decision (one-sided test of the deployment statistic against the ID calibration record)](docs/figure1.png)
 
 ## Method
 
