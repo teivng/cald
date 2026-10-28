@@ -1,17 +1,18 @@
 """The CALD detector: one backbone-agnostic loop, calibrate-then-detect.
 
-CALD (Calibrated Anchor-Loss Disagreement) finetunes only the backbone's
-decoder to *disagree* with its own pseudolabels on an unlabelled eval batch
-while still *agreeing* with a held-out labelled ID anchor batch. The statistic
-λ is the post-finetune anchor cross-entropy.
+CALD (Calibrated Anchor-Loss Disagreement) finetunes the PFN's decoder under
+a joint objective: a cross-entropy agreement term on a held-out labelled ID
+anchor batch, and a disagreement cross-entropy (DCE) term pushing the model
+away from its own frozen pseudolabels on the unlabelled eval batch. The
+post-finetune anchor loss λ := L_anc(θ_T) is systematically lower when the
+eval batch is OOD than when it is ID.
 
-THE DIRECTION IS FIXED, BY THEORY: CALD fires when λ is LOW. On a shifted eval
-batch the backbone is uncertain, the disagreement gradient is weak, and the
-anchor loss survives finetuning (stays low). On an in-distribution eval batch
-the backbone is confident, the disagreement gradient is strong and conflicts
-with the anchor, and the anchor loss rises. There is deliberately no option to
-flip, auto-calibrate, or two-side this comparison: the detector follows the
-mechanism, it does not fit an arbitrary discriminator.
+CALD turns this one-dimensional signal into a calibrated one-sided test:
+collect a null record of λ values over K calibration rounds under known-ID
+conditions, and at deployment declare OOD when the observed λ* falls below
+the α-quantile of that record. Under the null (the deployment batch drawn
+from the ID distribution, with support, anchor and hyperparameters fixed),
+the false-alarm rate is at most α + 1/(K+1).
 """
 
 from dataclasses import dataclass, field
@@ -30,9 +31,9 @@ from .seeding import seed_everything
 class CALDResult:
     """Outcome of one CALD detection call."""
 
-    statistic: float          # λ: post-finetune anchor cross-entropy
-    threshold: float          # fpr-quantile of the ID calibration statistics
-    fired: bool               # statistic <= threshold  (fire-low, by theory)
+    statistic: float          # λ*: post-finetune anchor cross-entropy
+    threshold: float          # α-quantile of the ID calibration record
+    fired: bool               # λ* < threshold  =>  declare OOD
     step_traj: list[float] = field(repr=False, default_factory=list)
     post_traj: list[float] = field(repr=False, default_factory=list)
 
@@ -42,18 +43,21 @@ class CALD:
 
     Args:
         backbone: a ``CALDBackbone`` adapter (see ``cald.adapters``).
-        lr: SGD learning rate for the decoder finetuning (paper default 1e-3).
-        n_steps: finetuning steps per detection call (paper default 50).
-        fpr: target false-positive rate; the threshold is the ``fpr``-quantile
-            of the ID calibration statistics (default 0.05).
-        n_calibration: number of bootstrapped ID calibration rounds (default 50;
-            with fewer than ~20 the low quantile is poorly resolved).
+        lr: learning rate η for the decoder finetuning (paper's certified
+            deployment mode: 1e-3, frozen before deployment).
+        n_steps: finetune steps T per round (paper default 50).
+        alpha: test level α; the threshold is the empirical α-quantile of the
+            calibration record, giving false-alarm rate <= α + 1/(K+1)
+            (default 0.05).
+        n_calibration: calibration rounds K (default 50; with fewer than ~20
+            the low quantile is poorly resolved).
         support_size: labelled rows used as the in-context support set
             (-1 = all available after the anchor is reserved).
         anchor_size: held-out labelled ID rows used as the anchor batch.
         eval_size: rows per calibration eval batch; detection batches of a
             different size are allowed but calibrate/detect sizes should match
-            for the FPR guarantee to be meaningful.
+            for the Type-I guarantee to be meaningful (the calibration and
+            deployment statistics must be exchangeable).
         seed: RNG seed for the splits and the calibration bootstraps (local
             generators only; the detector never touches global RNG state).
         deterministic: opt-in call to ``cald.seeding.seed_everything(seed)``
@@ -66,13 +70,13 @@ class CALD:
     """
 
     def __init__(self, backbone: CALDBackbone, lr: float = 1e-3, n_steps: int = 50,
-                 fpr: float = 0.05, n_calibration: int = 50,
+                 alpha: float = 0.05, n_calibration: int = 50,
                  support_size: int = 2000, anchor_size: int = 128,
                  eval_size: int = 128, seed: int = 42, deterministic: bool = False):
         self.backbone = backbone
         self.lr = lr
         self.n_steps = n_steps
-        self.fpr = fpr
+        self.alpha = alpha
         self.n_calibration = n_calibration
         self.support_size = support_size
         self.anchor_size = anchor_size
@@ -87,8 +91,9 @@ class CALD:
 
     # ------------------------------------------------------------------ fit
     def fit(self, X_id: np.ndarray, y_id: np.ndarray) -> "CALD":
-        """Split ID data into support / anchor / calibration pool, condition
-        the backbone, and calibrate the fire-low threshold."""
+        """Calibration phase: split the ID data into support / anchor /
+        calibration pool, condition the backbone, run K calibration rounds and
+        set the threshold at the empirical α-quantile of the λ record."""
         X_id, y_id = np.asarray(X_id), np.asarray(y_id)
         if self.deterministic:
             seed_everything(self.seed)
@@ -137,7 +142,7 @@ class CALD:
         for _ in range(self.n_calibration):
             X_ev, _, _ = stratified_bootstrap(X_cal, y_cal, self.eval_size, rng_eval)
             self.id_scores_.append(self.score(X_ev)[0])
-        self.threshold_ = float(np.percentile(self.id_scores_, self.fpr * 100))
+        self.threshold_ = float(np.percentile(self.id_scores_, self.alpha * 100))
         return self
 
     # ---------------------------------------------------------------- score
@@ -184,9 +189,10 @@ class CALD:
 
     # --------------------------------------------------------------- detect
     def detect(self, X_eval: np.ndarray) -> CALDResult:
-        """Score an eval batch and compare against the calibrated threshold.
+        """Run the deployment phase on an eval batch of unknown origin.
 
-        Fires iff λ <= threshold. The comparison direction is fixed (fire-low).
+        One-sided test against the calibration record (paper eq. "verdict"):
+        λ* < Quantile_α(λ^(1), ..., λ^(K))  =>  declare OOD (fired=True).
         """
         if self.threshold_ is None:
             raise RuntimeError("call fit(X_id, y_id) before detect")
@@ -194,7 +200,7 @@ class CALD:
         return CALDResult(
             statistic=lam,
             threshold=self.threshold_,
-            fired=bool(lam <= self.threshold_),
+            fired=bool(lam < self.threshold_),
             step_traj=traj["step_traj"],
             post_traj=traj["post_traj"],
         )

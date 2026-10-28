@@ -7,13 +7,15 @@ that exposes a differentiable forward pass and a decoder head.
 From **"When to Trust a PFN: Detecting Harmful Shift in Tabular Foundation
 Models"** (NeurIPS 2026).
 
-The idea is short: take a labelled support set, a held-out labelled **anchor**
-batch from the same distribution, and an unlabelled **eval** batch of unknown
-origin. Freeze the backbone, finetune only its decoder for a handful of steps,
-pushing it to *disagree* with its own pseudolabels on the eval batch while
-still *agreeing* with the anchor. Whether the anchor loss survives the
-disagreement gradient is a sharp signal for whether the eval batch is in- or
-out-of-distribution.
+CALD partitions the queries into two roles beside the in-context **support**
+set: a held-out *labelled* ID **anchor** batch, and an *unlabelled* **eval**
+batch whose distributional origin is unknown. The decoder is briefly finetuned
+under a joint objective — a cross-entropy agreement term on the anchor against
+its true labels, plus a disagreement cross-entropy (DCE) term on the eval
+batch rewarding low probability on the model's own frozen pseudolabels. The
+post-finetune anchor loss **λ := L_anc(θ_T)** is systematically *lower* when
+the eval batch is OOD than when it is ID, and CALD turns this signal into a
+calibrated one-sided test.
 
 ```
               X_support (labelled, in-context)
@@ -32,15 +34,27 @@ out-of-distribution.
               final value λ LOW  ⇔  eval is shifted
 ```
 
-## The direction is part of the method
+## Method
 
-CALD **fires when the post-finetune anchor loss is LOW** — on shifted data the
-backbone is uncertain, the disagreement gradient is weak, and the anchor loss
-survives. This package deliberately offers **no option to flip, auto-calibrate,
-or two-side** that comparison: the detector follows the mechanism; it is not an
-arbitrary discriminator. One honest consequence: "shifted" is relative to the
-backbone. A shift that barely degrades a strong backbone is near-distribution
-*for it*, and CALD will treat it accordingly.
+Given hyperparameters T (finetune steps), K (calibration rounds), η (learning
+rate) and α (test level), CALD proceeds in two phases:
+
+1. **Calibration phase.** For each round k = 1…K, draw an ID eval batch,
+   freeze its pseudolabels assigned by the pretrained model, reset θ ← θ₀, and
+   run T gradient steps on the joint loss, forward-passing the sequence
+   (support, anchor, eval) at each step. Record the post-finetune anchor loss
+   λ⁽ᵏ⁾ := L_anc(θ_T). The K values form an empirical null record under
+   known-ID conditions.
+2. **Deployment phase.** On a batch of unknown origin, freeze its
+   pseudolabels, reset θ ← θ₀, run the same T-step finetune, and record λ\*.
+   The verdict is a one-sided test against the calibration record:
+
+   λ\* < Quantile_α(λ⁽¹⁾, …, λ⁽ᴷ⁾)  ⟹  declare OOD.
+
+The support set and anchor are held fixed across both phases; only the eval
+batch varies. Under the null (the deployment batch drawn from the same
+distribution as the calibration batches, hyperparameters fixed before
+deployment), the false-alarm rate is at most α + 1/(K+1).
 
 ## Install
 
@@ -63,20 +77,21 @@ import numpy as np
 from cald import CALD, get_adapter
 
 backbone = get_adapter("nanotabiclv2")           # TabICLv2 via nanoTabICL
-det = CALD(backbone, lr=1e-3, n_steps=50, fpr=0.05, n_calibration=50,
+det = CALD(backbone, lr=1e-3, n_steps=50, alpha=0.05, n_calibration=50,
            support_size=2000, anchor_size=128, eval_size=128, seed=42)
 
-det.fit(X_id, y_id)        # labelled in-distribution data: builds the
-                           # support/anchor split and calibrates the threshold
-result = det.detect(X_new) # an unlabelled batch of unknown origin
+det.fit(X_id, y_id)        # calibration phase: support/anchor split +
+                           # K calibration rounds -> threshold
+result = det.detect(X_new) # deployment phase on a batch of unknown origin
 print(result.fired, result.statistic, result.threshold)
 ```
 
 `CALD.fit` splits the ID data into a support set (the backbone's in-context
-prompt), a disjoint anchor batch, and a calibration pool; it then runs
-`n_calibration` bootstrapped ID rounds and sets the threshold at the `fpr`
-quantile of their statistics. `detect` runs one finetuning episode on a fresh
-copy of the decoder and compares λ against that threshold.
+prompt), a disjoint anchor batch, and a calibration pool, then runs the
+calibration phase (`n_calibration` = K rounds, eval batches bootstrapped from
+the calibration pool) and sets the threshold at the empirical α-quantile of
+the λ record. `detect` runs the deployment phase on a fresh copy of the
+decoder (θ ← θ₀ each call).
 
 ## Backbones
 
@@ -120,10 +135,13 @@ pytest tests/            # detector semantics run without weights;
 
 ## Paper settings
 
-`lr=1e-3`, `n_steps=50`, `anchor_size=128`, `eval_size=128`, calibration over
-50 rounds, threshold at the 5% quantile (TPR@5%FPR). The full experimental
-harness (15 datasets, 16 baselines, harm labelling via a Hoeffding bound) lives
-in the paper's research repository.
+The paper's certified deployment mode is η = `lr=1e-3` frozen before
+deployment, with `n_steps=50` (T), `n_calibration=50` (K), `alpha=0.05`,
+`anchor_size=128`, `eval_size=128` — these are the package defaults. Like the
+paper's experiments, the decoder finetuned is the backbone's full decoder MLP
+(last-layer-only finetuning appears in the paper only as an ablation). The
+full experimental harness (15 datasets, 16 baselines, harm labelling via a
+Hoeffding bound) lives in the paper's research repository.
 
 ## Citation
 

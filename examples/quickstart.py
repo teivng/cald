@@ -33,7 +33,7 @@ def main():
     X_id, y_id = make_id(1200, rng)
 
     backbone = get_adapter("nanotabiclv2")
-    det = CALD(backbone, lr=1e-2, n_steps=50, fpr=0.05, n_calibration=30,
+    det = CALD(backbone, lr=1e-2, n_steps=50, alpha=0.05, n_calibration=30,
                support_size=512, anchor_size=96, eval_size=64, seed=42)
     print("calibrating on ID data (30 rounds)...")
     det.fit(X_id, y_id)

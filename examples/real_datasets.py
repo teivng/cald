@@ -104,7 +104,7 @@ def main():
     for name in args.datasets:
         rng = np.random.default_rng(42)
         (X_fit, y_fit), (X_id_pool, _), (X_ood_pool, _) = LOADERS[name](rng)
-        det = CALD(backbone, lr=1e-3, n_steps=50, fpr=0.05, n_calibration=50,
+        det = CALD(backbone, lr=1e-3, n_steps=50, alpha=0.05, n_calibration=50,
                    support_size=2000, anchor_size=128, eval_size=128, seed=42)
         det.fit(X_fit, y_fit)
         lam_id, fire_id = eval_pool(det, X_id_pool, args.rounds, det.eval_size, rng)

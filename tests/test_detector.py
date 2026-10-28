@@ -73,7 +73,8 @@ def test_fire_low_semantics_and_result_shape():
     X_id = X[rng.choice(len(X), 64, replace=False)]
     r = det.detect(X_id)
     assert isinstance(r, CALDResult)
-    assert r.fired == (r.statistic <= r.threshold)
+    # paper eq. (verdict): one-sided, strict — λ* < Quantile_α(record) => OOD
+    assert r.fired == (r.statistic < r.threshold)
     assert len(r.step_traj) == 10 and len(r.post_traj) == 10
 
 
