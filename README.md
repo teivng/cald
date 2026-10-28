@@ -21,21 +21,21 @@ This section follows Section 2 of the paper.
 
 ![Figure 1 from the paper. CALD in three steps: setup (a labelled anchor inside the ID manifold, an eval batch of unknown origin), mechanism (joint agree/disagree finetuning; the anchor-loss trajectory separates ID from OOD), decision (a one-sided test of the deployment statistic against the ID calibration record).](docs/figure1.png)
 
-Denote the ID distribution $p_0$ and let
-$\mathcal{D}^{\mathrm{sup}} = (X_{\mathrm{sup}}, y_{\mathrm{sup}}) \sim p_0^n$
-be a size-$n$ ID support set. The queries are partitioned into two disjoint
+Denote the ID distribution $`p_0`$ and let
+$`\mathcal{D}^{\mathrm{sup}} = (X_{\mathrm{sup}}, y_{\mathrm{sup}}) \sim p_0^n`$
+be a size-$`n`$ ID support set. The queries are partitioned into two disjoint
 roles:
 
-- **Anchor** $(X_{\mathrm{anc}}, y_{\mathrm{anc}}) \sim p_0$ with
-  $X_{\mathrm{anc}} \cap X_{\mathrm{sup}} = \emptyset$: a held-out set of
+- **Anchor** $`(X_{\mathrm{anc}}, y_{\mathrm{anc}}) \sim p_0`$ with
+  $`X_{\mathrm{anc}} \cap X_{\mathrm{sup}} = \emptyset`$: a held-out set of
   *labelled* ID samples, serving as a reference ID signal.
-- **Eval** $X_{\mathrm{eval}} \sim p_1 \overset{?}{=} p_0$: a batch of
+- **Eval** $`X_{\mathrm{eval}} \sim p_1 \overset{?}{=} p_0`$: a batch of
   *unlabelled* query points whose distributional origin is unknown.
 
-Let $q_\theta$ denote the PFN conditioned on $\mathcal{D}^{\mathrm{sup}}$, and
-write $\hat{y}_{\mathrm{eval}}$ for the pseudolabels
-$\hat{y} = \arg\max_y q_{\theta}(y \mid x, \mathcal{D}^{\mathrm{sup}})$ it
-assigns to $X_{\mathrm{eval}}$. CALD computes the cross-entropy loss rewarding
+Let $`q_\theta`$ denote the PFN conditioned on $`\mathcal{D}^{\mathrm{sup}}`$, and
+write $`\hat{y}_{\mathrm{eval}}`$ for the pseudolabels
+$`\hat{y} = \arg\max_y q_{\theta}(y \mid x, \mathcal{D}^{\mathrm{sup}})`$ it
+assigns to $`X_{\mathrm{eval}}`$. CALD computes the cross-entropy loss rewarding
 correct predictions on the anchor,
 
 $$
@@ -53,34 +53,34 @@ $$
 $$
 
 Gradient descent on the joint objective
-$\mathcal{L}(\theta) = \mathcal{L}_{\mathrm{anc}}(\theta) + \mathcal{L}_{\mathrm{eval}}(\theta)$
-forces $q_\theta$ to disagree on the eval set while remaining performant on ID
+$`\mathcal{L}(\theta) = \mathcal{L}_{\mathrm{anc}}(\theta) + \mathcal{L}_{\mathrm{eval}}(\theta)`$
+forces $`q_\theta`$ to disagree on the eval set while remaining performant on ID
 samples. The *post-finetune anchor loss*
-$\lambda := \mathcal{L}_{\mathrm{anc}}(\theta_T)$ is systematically **lower**
-when $X_{\mathrm{eval}}$ is OOD than when it is ID; CALD turns this
+$`\lambda := \mathcal{L}_{\mathrm{anc}}(\theta_T)`$ is systematically **lower**
+when $`X_{\mathrm{eval}}`$ is OOD than when it is ID; CALD turns this
 one-dimensional signal into a calibrated one-sided test.
 
-Given hyperparameters $T$ (finetune steps), $K$ (calibration rounds), $\eta$
-(learning rate), and $\alpha$ (test level), CALD proceeds in two phases:
+Given hyperparameters $`T`$ (finetune steps), $`K`$ (calibration rounds), $`\eta`$
+(learning rate), and $`\alpha`$ (test level), CALD proceeds in two phases:
 
-1. **Calibration phase.** For each round $k = 1, \ldots, K$, draw an ID eval
-   batch $X_{\mathrm{eval}}^{(k)} \sim p_0$, freeze its pseudolabels
-   $\hat{y}_{\mathrm{eval}}^{(k)}$ assigned by $q_{\theta_0}$, and reset
-   $\theta \leftarrow \theta_0$. At each of $T$ gradient steps, the PFN
+1. **Calibration phase.** For each round $`k = 1, \ldots, K`$, draw an ID eval
+   batch $`X_{\mathrm{eval}}^{(k)} \sim p_0`$, freeze its pseudolabels
+   $`\hat{y}_{\mathrm{eval}}^{(k)}`$ assigned by $`q_{\theta_0}`$, and reset
+   $`\theta \leftarrow \theta_0`$. At each of $`T`$ gradient steps, the PFN
    forward-passes the joint sequence
-   $(X_{\mathrm{sup}}, y_{\mathrm{sup}}, X_{\mathrm{anc}}, X_{\mathrm{eval}}^{(k)})$:
-   the anchor logits supply $\mathcal{L}_{\mathrm{anc}}(\theta)$ against the
-   true labels, the eval logits supply $\mathcal{L}_{\mathrm{eval}}(\theta)$
+   $`(X_{\mathrm{sup}}, y_{\mathrm{sup}}, X_{\mathrm{anc}}, X_{\mathrm{eval}}^{(k)})`$:
+   the anchor logits supply $`\mathcal{L}_{\mathrm{anc}}(\theta)`$ against the
+   true labels, the eval logits supply $`\mathcal{L}_{\mathrm{eval}}(\theta)`$
    against the frozen pseudolabels, and the joint loss is descended via
-   $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}(\theta)$ with
+   $`\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}(\theta)`$ with
    only the decoder trainable. Record
-   $\lambda^{(k)} := \mathcal{L}_{\mathrm{anc}}(\theta_T)$. After $K$ rounds,
-   the record $\{\lambda^{(k)}\}_{k=1}^{K}$ is an empirical null under
+   $`\lambda^{(k)} := \mathcal{L}_{\mathrm{anc}}(\theta_T)`$. After $`K`$ rounds,
+   the record $`\{\lambda^{(k)}\}_{k=1}^{K}`$ is an empirical null under
    known-ID conditions.
-2. **Deployment phase.** On a deployment batch $X_{\mathrm{eval}}^{*}$ of
-   unknown origin, freeze its pseudolabels, reset $\theta \leftarrow \theta_0$,
-   and run the same $T$-step finetune, recording the deployment statistic
-   $\lambda^{*} := \mathcal{L}_{\mathrm{anc}}(\theta_T)$. The verdict is a
+2. **Deployment phase.** On a deployment batch $`X_{\mathrm{eval}}^{*}`$ of
+   unknown origin, freeze its pseudolabels, reset $`\theta \leftarrow \theta_0`$,
+   and run the same $`T`$-step finetune, recording the deployment statistic
+   $`\lambda^{*} := \mathcal{L}_{\mathrm{anc}}(\theta_T)`$. The verdict is a
    one-sided test against the calibration record:
 
 $$
@@ -91,7 +91,7 @@ $$
 The support set and anchor are held fixed across both phases; only the eval
 batch varies. Under the null (the deployment batch exchangeable with the
 calibration batches, hyperparameters fixed before deployment), the false-alarm
-rate is at most $\alpha + \frac{1}{K+1}$.
+rate is at most $`\alpha + \frac{1}{K+1}`$.
 
 ## Install
 
@@ -125,10 +125,10 @@ print(result.fired, result.statistic, result.threshold)
 
 `CALD.fit` splits the ID data into a support set (the backbone's in-context
 prompt), a disjoint anchor batch, and a calibration pool, then runs the
-calibration phase (`n_calibration` $= K$ rounds, eval batches bootstrapped
+calibration phase (`n_calibration` $`= K`$ rounds, eval batches bootstrapped
 from the calibration pool) and sets the threshold at the empirical
-$\alpha$-quantile of the $\lambda$ record. `detect` runs the deployment phase
-on a fresh copy of the decoder ($\theta \leftarrow \theta_0$ each call).
+$`\alpha`$-quantile of the $`\lambda`$ record. `detect` runs the deployment phase
+on a fresh copy of the decoder ($`\theta \leftarrow \theta_0`$ each call).
 
 ## Backbones
 
@@ -176,10 +176,10 @@ The paper's certified deployment mode, and this package's defaults:
 
 | Parameter | Paper symbol | Default |
 |---|---|---|
-| `lr` | $\eta$ | `1e-3` (frozen before deployment) |
-| `n_steps` | $T$ | 50 |
-| `n_calibration` | $K$ | 50 |
-| `alpha` | $\alpha$ | 0.05 |
+| `lr` | $`\eta`$ | `1e-3` (frozen before deployment) |
+| `n_steps` | $`T`$ | 50 |
+| `n_calibration` | $`K`$ | 50 |
+| `alpha` | $`\alpha`$ | 0.05 |
 | `anchor_size` | — | 128 |
 | `eval_size` | — | 128 |
 
@@ -189,7 +189,7 @@ ablation). The full experimental harness (15 datasets, 16 baselines, harm
 labelling via a Hoeffding bound) lives in the paper's research repository.
 
 **Hardware.** CALD is light: only the decoder MLP trains (about 0.5M
-parameters for TabICLv2), so a detection call is $T$ forward/backward passes,
+parameters for TabICLv2), so a detection call is $`T`$ forward/backward passes,
 not model training. The paper's experiments ran on a single NVIDIA A6000
 (48 GB), with peak GPU memory around 10 GB on the largest dataset; the
 TabICLv2/nanoTabICL experiments ran on a single RTX PRO 6000. On plain tabular
