@@ -15,6 +15,12 @@ on shifted data it was never confident to begin with, disagreement is cheap,
 and the anchor loss stays low — so a low post-finetune anchor loss, compared
 against its range on known in-distribution batches, is the alarm.
 
+![CALD, animated: a PFN's in-context decision boundary; calibration rounds finetune the decoder to disagree on bootstrapped ID eval batches while agreeing on the anchor, recording the post-finetune anchor loss; at deployment a benign batch lands inside the calibration record while a harmfully shifted batch falls below the threshold and fires.](docs/cald_story.gif)
+
+*The method in 90 seconds, on a 2-D task with the real TabICLv2 backbone —
+every number in the animation comes from actual CALD runs
+([`examples/manim/`](examples/manim/) regenerates it; full-quality video:
+[`docs/cald_story.mp4`](docs/cald_story.mp4)).*
 
 ## Install
 
