@@ -428,9 +428,17 @@ class CALDStory(Scene):
                     stroke_width=1.5, fill_color=BG, fill_opacity=0.9)
                 boot = VGroup(bbox, btxt).move_to(RIGHT * 3.55 + DOWN * 0.2)
                 boot.set_z_index(8)
-                self.play(FadeIn(boot), run_time=0.6)
+                sq_pts = np.array(
+                    [sq.get_center()[:2] for sq in self.eval_m])
+                ptrs = VGroup(*[
+                    Line(boot.get_left(), [p[0], p[1], 0],
+                         stroke_color=GREEN, stroke_width=1.6,
+                         stroke_opacity=0.8)
+                    for p in fps3(sq_pts)
+                ])
+                self.play(FadeIn(boot), Create(ptrs), run_time=1.0)
                 self.wait(1.2)
-                self.play(FadeOut(boot), run_time=0.5)
+                self.play(FadeOut(boot), FadeOut(ptrs), run_time=0.5)
             elif k > 1:
                 self.set_eval_squares(D["cal_evals"][k][EV_IDX], tempo)
             self.run_round(f"cal{k}", D["cal_trajs"][k],
