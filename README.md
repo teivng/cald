@@ -219,3 +219,10 @@ rate is at most $`\alpha + \frac{1}{K+1}`$.
 MIT. The vendored nanoTabICL source (`third_party/nanotabicl`) is BSD-3-Clause,
 © its authors. TabICLv2 weights are downloaded from Hugging Face under their
 own terms and are not redistributed here.
+
+## embed-test (temporary)
+
+https://github.com/teivng/cald/raw/main/docs/cald_story.mp4
+
+<video src="https://github.com/teivng/cald/raw/main/docs/cald_story.mp4" controls muted loop width="800"></video>
+
